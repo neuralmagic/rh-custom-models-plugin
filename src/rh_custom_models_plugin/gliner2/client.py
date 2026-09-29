@@ -43,6 +43,15 @@ class GLiNER2Client(ExtractorRuntimeMixin):
 
     def build(self, text: str, tasks: dict[str, Any]) -> GLiNER2Request:
         """Tasks as for ``classify_text``: ``{name: labels | {labels, ...}}``."""
+        if not tasks:
+            raise ValueError("tasks must name at least one classification")
+        for name, config in tasks.items():
+            labels = config.get("labels") if isinstance(config, dict) else config
+            if not isinstance(labels, (list, dict)) or not labels:
+                raise ValueError(
+                    f"task {name!r}: labels must be a non-empty list, or a dict "
+                    "of label to description"
+                )
         schema = self._classification_schema(tasks)
         (schema_dict,), (metadata,) = self._build_schema_dicts_and_metadata([schema])
         batch = self.processor.collate_fn_inference([(text, schema_dict)])

@@ -61,13 +61,30 @@ Plain `/v1/completions` prompts are routed to the encoder by the plugin. See [`e
 
 ### GLiNER2
 
-GLiNER2 checkpoints keep the encoder config in `encoder_config/`, so serve them with the plugin's config parser:
+Serve with the `/v1/classify` endpoint. `VLLM_PLUGINS=rh_gliner2` loads the model family and its endpoint, and `--config-format gliner2` reads the checkpoint's `encoder_config/`:
 
 ```bash
-vllm serve fastino/GLiNER2.5-Decide-1B --config-format gliner2
+VLLM_PLUGINS=rh_gliner2 uvx --python 3.12 --torch-backend auto \
+  --from "vllm==0.30.0" \
+  --with "rh-custom-models-plugin[gliner2] @ git+ssh://git@github.com/neuralmagic/rh-custom-models-plugin.git" \
+  vllm serve fastino/GLiNER2.5-Decide-1B --config-format gliner2
 ```
 
-The model returns one raw logit per candidate label. `GLiNER2Client` (install with `.[gliner2]`) uses the `gliner2` package to build the prompt and to turn the logits into the same answers as `AutoExtractor.classify_text`, including multi-label thresholds and label descriptions:
+`POST /v1/classify` takes the arguments of `AutoExtractor.classify_text` and returns its answers, one per text:
+
+```bash
+curl localhost:8000/v1/classify -H 'content-type: application/json' -d '{
+  "text": ["Refund my duplicate charge today.", "The app crashes on login."],
+  "tasks": {
+    "intent": ["refund", "bug_report", "other"],
+    "topics": {"labels": ["billing", "login", "shipping"], "multi_label": true, "cls_threshold": 0.4}
+  },
+  "include_confidence": true
+}'
+# {"results": [{"intent": {"label": "refund", "confidence": ...}, "topics": [...]}, ...]}
+```
+
+Without the endpoint, the model returns one raw logit per candidate label from `/pooling` (`token_classify`). `GLiNER2Client` builds the prompt and decodes those logits with the `gliner2` package's own code, which is what the endpoint does:
 
 ```python
 from rh_custom_models_plugin.gliner2.client import GLiNER2Client

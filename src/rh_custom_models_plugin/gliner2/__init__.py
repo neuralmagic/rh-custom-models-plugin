@@ -12,13 +12,19 @@ ARCHITECTURES = {
 
 
 def register() -> None:
+    from transformers import AutoConfig
     from vllm.model_executor.models.registry import ModelRegistry
     from vllm.transformers_utils.config import (
         get_config_parser,
         register_config_parser,
     )
 
-    from rh_custom_models_plugin.gliner2.config import GLiNER2ConfigParser
+    from rh_custom_models_plugin.gliner2.config import (
+        GLiNER2ConfigParser,
+        GLiNER2RootConfig,
+    )
+
+    AutoConfig.register("extractor", GLiNER2RootConfig, exist_ok=True)
 
     try:
         get_config_parser("gliner2")

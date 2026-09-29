@@ -18,6 +18,16 @@ SUPPORTED_ENCODERS = ("modernbert",)
 MARKER_TOKENS = ("[P]", "[L]", "[SEP_TEXT]")
 
 
+class GLiNER2RootConfig(PretrainedConfig):
+    """The root ``config.json`` alone.
+
+    vLLM's tokenizer loading reads the config in HF format; registering this
+    lets that read succeed. The model itself uses ``GLiNER2ConfigParser``.
+    """
+
+    model_type = "extractor"
+
+
 class GLiNER2ConfigParser(ConfigParserBase):
     def parse(
         self,

@@ -25,6 +25,10 @@ rh_bart = "rh_custom_models_plugin.bart:register"
 rh_florence2 = "rh_custom_models_plugin.florence2:register"
 rh_gliner2 = "rh_custom_models_plugin.gliner2:register"
 
+# HTTP routes for `vllm serve`, loaded only when named in VLLM_PLUGINS.
+[project.entry-points."vllm.endpoint_plugins"]
+rh_gliner2 = "rh_custom_models_plugin.gliner2.endpoint:GLiNER2Endpoint"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
