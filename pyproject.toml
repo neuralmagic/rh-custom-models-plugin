@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rh-custom-models-plugin"
+version = "0.1.0"
+description = "vLLM plugin with model definitions not carried upstream"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+dependencies = [
+    "vllm>=0.30.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
+lint = ["ruff>=0.6"]
+
+# One entry point per model family, named rh_<family>. vLLM runs every
+# vllm.general_plugins entry point unless VLLM_PLUGINS lists which to load.
+[project.entry-points."vllm.general_plugins"]
+rh_bart = "rh_custom_models_plugin.bart:register"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+rh_custom_models_plugin = ["py.typed"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP"]
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: tests that load models or run GPU inference",
+]
