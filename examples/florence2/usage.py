@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Florence-2 example usage of the vLLM BART plugin.
+Florence-2 example usage.
 
 This script demonstrates how to use Florence-2 models with vLLM
-after installing the BART plugin.
+after installing rh-custom-models-plugin.
 """
 
 from vllm import LLM, SamplingParams

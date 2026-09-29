@@ -1,11 +1,12 @@
-"""BART (encoder-decoder).
+"""Florence-2 (DaViT vision encoder, BART language backbone).
 
-Imported from https://github.com/vllm-project/bart-plugin at 4da3192.
+Imported from https://github.com/vllm-project/bart-plugin at 4da3192. Uses the
+BART modules, config check and OpenAI prompt adapter from the ``bart`` family.
 """
 
 ARCHITECTURES = {
-    "BartForConditionalGeneration": (
-        "rh_custom_models_plugin.bart.bart:BartForConditionalGeneration"
+    "Florence2ForConditionalGeneration": (
+        "rh_custom_models_plugin.florence2.model:Florence2ForConditionalGeneration"
     ),
 }
 

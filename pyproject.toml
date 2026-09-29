@@ -14,13 +14,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=7.0"]
+gliner2 = ["gliner2>=2.0", "peft"]
+test = ["pytest>=7.0", "gliner2>=2.0", "peft"]
 lint = ["ruff>=0.6"]
 
 # One entry point per model family, named rh_<family>. vLLM runs every
 # vllm.general_plugins entry point unless VLLM_PLUGINS lists which to load.
 [project.entry-points."vllm.general_plugins"]
 rh_bart = "rh_custom_models_plugin.bart:register"
+rh_florence2 = "rh_custom_models_plugin.florence2:register"
+rh_gliner2 = "rh_custom_models_plugin.gliner2:register"
 
 [tool.setuptools.packages.find]
 where = ["src"]

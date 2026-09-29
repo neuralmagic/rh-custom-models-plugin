@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Example usage of the vLLM BART plugin.
+Example usage of BART.
 
 This script demonstrates how to use BART models with vLLM
-after installing the BART plugin.
+after installing rh-custom-models-plugin.
 """
 
 from vllm import LLM, SamplingParams
