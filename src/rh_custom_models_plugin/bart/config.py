@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import vllm.config.vllm as vllm_config_module
 from vllm.model_executor.models.config import (
     MODELS_CONFIG_MAP,
     VerifyAndUpdateConfig,
@@ -14,6 +13,7 @@ if TYPE_CHECKING:
     from vllm.config import VllmConfig
 
 
+# Architectures with a BART decoder, across the bart and florence2 families.
 BART_ARCHITECTURES = (
     "BartForConditionalGeneration",
     "Florence2ForConditionalGeneration",
@@ -33,22 +33,5 @@ class BartMRV2Config(VerifyAndUpdateConfig):
 
 
 def register_bart_config() -> None:
-    """Register BART-family config hooks and default MRV2 selection."""
     for architecture in BART_ARCHITECTURES:
         MODELS_CONFIG_MAP[architecture] = BartMRV2Config
-
-    # vLLM 0.30 (vllm-project/vllm#53183) made MRV2 the default for all models
-    # and dropped this allowlist; older versions opt in per architecture.
-    current = getattr(vllm_config_module, "DEFAULT_V2_MODEL_RUNNER_ARCHITECTURES", None)
-    if current is None:
-        return
-    vllm_config_module.DEFAULT_V2_MODEL_RUNNER_ARCHITECTURES = frozenset(
-        (*current, *BART_ARCHITECTURES)
-    )
-    defaults = getattr(
-        vllm_config_module,
-        "default_v2_model_runner_architectures",
-        None,
-    )
-    if defaults is not None:
-        defaults.cache_clear()
