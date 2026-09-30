@@ -66,7 +66,7 @@ Serve with the `/v1/classify` endpoint. `VLLM_PLUGINS=rh_gliner2` loads the mode
 ```bash
 VLLM_PLUGINS=rh_gliner2 uvx --python 3.12 --torch-backend auto \
   --from "vllm==0.30.0" \
-  --with "rh-custom-models-plugin[gliner2] @ git+ssh://git@github.com/neuralmagic/rh-custom-models-plugin.git" \
+  --with "rh-custom-models-plugin[gliner2] @ git+https://github.com/neuralmagic/rh-custom-models-plugin.git" \
   vllm serve fastino/GLiNER2.5-Decide --config-format gliner2
 ```
 
