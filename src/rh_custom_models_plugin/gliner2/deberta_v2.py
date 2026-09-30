@@ -1,17 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
 """DeBERTa-v2/v3 encoder, the backbone of the DeBERTa GLiNER2 checkpoints.
 
-Adapted from vllm-project/vllm#42094 (JLiu4Coding), not yet merged upstream. The
-disentangled attention runs in plain PyTorch on the batch's sequences padded
-to a common length (vLLM flattens them; each restarts at position 0), so it
-needs no attention backend or KV cache.
+Adapted from vllm-project/vllm#42094 (JLiu4Coding), not yet merged upstream.
+The disentangled attention runs on vLLM's FlexAttention backend, with the
+relative-position terms added by a ``score_mod`` (see ``deberta_flex.py``).
 """
 
 import math
-from typing import NamedTuple
 
 import torch
-import torch.nn.functional as F
 from torch import nn
 from transformers import DebertaV2Config
 from transformers.activations import ACT2FN
@@ -21,25 +18,7 @@ from vllm.model_executor.layers.linear import ColumnParallelLinear, RowParallelL
 from vllm.model_executor.layers.vocab_parallel_embedding import VocabParallelEmbedding
 from vllm.sequence import IntermediateTensors
 
-
-class Padding(NamedTuple):
-    """Where each sequence's tokens sit in the flattened batch, padded."""
-
-    index: torch.Tensor  # [num_seqs, max_len] token indices (0 at padding)
-    mask: torch.Tensor  # [num_seqs, max_len] True for real tokens
-
-    @classmethod
-    def from_positions(cls, positions: torch.Tensor) -> "Padding":
-        # vLLM flattens the batch; each sequence starts again at position 0.
-        starts = (positions == 0).nonzero(as_tuple=True)[0].cpu()
-        lens = torch.diff(starts, append=starts.new_tensor([len(positions)]))
-        offsets = torch.arange(int(lens.max()))
-        mask = offsets[None, :] < lens[:, None]
-        index = (starts[:, None] + offsets[None, :]).masked_fill(~mask, 0)
-        device = positions.device
-        return cls(
-            index.to(device, non_blocking=True), mask.to(device, non_blocking=True)
-        )
+from rh_custom_models_plugin.gliner2.deberta_flex import DebertaAttention
 
 
 class DebertaV2Embeddings(nn.Module):
@@ -93,18 +72,13 @@ class DebertaV2Embeddings(nn.Module):
 
 
 class DebertaV2DisentangledSelfAttention(nn.Module):
-    """DeBERTa disentangled attention: c2c + c2p + p2c.
-
-    Uses pure-PyTorch matmuls (no FlashAttention) to support the custom
-    attention-bias computation required by relative-position embeddings.
-    Processes each sequence in the batch independently, which is correct for
-    vLLM's flat [total_tokens, hidden] tensor layout.
-    """
+    """DeBERTa disentangled attention: c2c + c2p + p2c."""
 
     def __init__(
         self,
         config: DebertaV2Config,
         max_relative_positions: int,
+        max_len: int,
         prefix: str = "",
     ) -> None:
         super().__init__()
@@ -134,6 +108,10 @@ class DebertaV2DisentangledSelfAttention(nn.Module):
             self.pos_att_type = [p.strip().lower() for p in pos_att_type_raw]
         else:
             self.pos_att_type = [p.strip() for p in pos_att_type_raw.lower().split("|")]
+        if sorted(self.pos_att_type) != ["c2p", "p2c"]:
+            raise NotImplementedError(
+                f"pos_att_type {self.pos_att_type}: only c2p|p2c is supported"
+            )
         self.share_att_key = getattr(config, "share_att_key", True)
 
         # scale = sqrt(head_dim * scale_factor) where scale_factor counts
@@ -175,6 +153,24 @@ class DebertaV2DisentangledSelfAttention(nn.Module):
                     bias=True,
                     prefix=f"{prefix}.pos_query_proj",
                 )
+
+        self.attn = DebertaAttention(
+            self.num_heads,
+            self.head_dim,
+            1 / self.scale,
+            prefix=f"{prefix}.attn",
+        )
+        # Table index for each relative position q - k in (-max_len, max_len).
+        rel_pos = torch.arange(-max_len + 1, max_len)
+        if self.position_buckets > 0:
+            rel_pos = self._log_bucket_positions(rel_pos)
+        att_span = self.max_relative_positions
+        self.rel_offset = max_len - 1
+        self.register_buffer(
+            "rel_index",
+            (rel_pos + att_span).clamp(0, 2 * att_span - 1),
+            persistent=False,
+        )
 
     def _log_bucket_positions(self, rel_pos: torch.Tensor) -> torch.Tensor:
         """Apply DeBERTa-v2 log-scale position bucketing.
@@ -220,50 +216,33 @@ class DebertaV2DisentangledSelfAttention(nn.Module):
 
     def forward(
         self,
-        hidden_states: torch.Tensor,  # [total_tokens, hidden_size]
+        hidden_states: torch.Tensor,  # [tokens, hidden_size]
+        positions: torch.Tensor,  # [tokens]; restarts at 0 for each sequence
         rel_embeddings: torch.Tensor,  # [2 * att_span, hidden_size]
-        padding: Padding,
-    ) -> torch.Tensor:  # [total_tokens, all_head_size]
-        """All sequences at once, padded to the longest one."""
-        batch, length = padding.index.shape
+    ) -> torch.Tensor:  # [tokens, all_head_size]
+        q = self.query_proj(hidden_states)[0]
+        k = self.key_proj(hidden_states)[0]
+        v = self.value_proj(hidden_states)[0]
 
-        def heads(x: torch.Tensor) -> torch.Tensor:  # -> [B, H, L, head_dim]
-            x = x[padding.index].view(batch, length, self.num_heads, self.head_dim)
-            return x.transpose(1, 2)
+        def heads(x: torch.Tensor) -> torch.Tensor:  # -> [tokens, heads, head_dim]
+            return x.view(-1, self.num_heads, self.head_dim)
 
-        q = heads(self.query_proj(hidden_states)[0])
-        k = heads(self.key_proj(hidden_states)[0])
-        v = heads(self.value_proj(hidden_states)[0])
-        scores = torch.matmul(q, k.transpose(-1, -2)) / self.scale
+        # [tokens, heads, 2 * att_span], scaled like the c2c scores
+        proj = self.key_proj if self.share_att_key else self.pos_key_proj
+        pos_key = self._project_rel_emb(rel_embeddings, proj)
+        c2p = torch.einsum("thd,hds->ths", heads(q), pos_key) / self.scale
+        proj = self.query_proj if self.share_att_key else self.pos_query_proj
+        pos_query = self._project_rel_emb(rel_embeddings, proj)
+        p2c = torch.einsum("thd,hds->ths", heads(k), pos_query) / self.scale
 
-        # rel_pos[q, k] = q - k: every sequence starts at position 0.
-        pos = torch.arange(length, device=hidden_states.device)
-        rel_pos = pos[:, None] - pos[None, :]
-        if self.position_buckets > 0:
-            rel_pos = self._log_bucket_positions(rel_pos)
-        att_span = self.max_relative_positions
-        pos_idx = (rel_pos + att_span).clamp(0, 2 * att_span - 1)
-        pos_idx = pos_idx.expand(batch, self.num_heads, length, length)
-
-        if "c2p" in self.pos_att_type:
-            proj = self.key_proj if self.share_att_key else self.pos_key_proj
-            pos_key = self._project_rel_emb(rel_embeddings, proj)
-            c2p = torch.matmul(q, pos_key) / self.scale  # [B, H, L, 2 * att_span]
-            scores = scores + torch.gather(c2p, -1, pos_idx)
-        if "p2c" in self.pos_att_type:
-            proj = self.query_proj if self.share_att_key else self.pos_query_proj
-            pos_query = self._project_rel_emb(rel_embeddings, proj)
-            p2c = torch.matmul(k, pos_query) / self.scale  # [B, H, L_k, 2 * att_span]
-            # scores[q, k] += p2c[k, pos_idx[q, k]]
-            p2c = torch.gather(p2c, -1, pos_idx.transpose(-1, -2))
-            scores = scores + p2c.transpose(-1, -2)
-
-        scores = scores.masked_fill(
-            ~padding.mask[:, None, None, :], torch.finfo(scores.dtype).min
+        self.attn.relative_terms = (
+            c2p,
+            p2c,
+            positions,
+            self.rel_index,
+            self.rel_offset,
         )
-        context = torch.matmul(F.softmax(scores, dim=-1), v)  # [B, H, L, head_dim]
-        context = context.transpose(1, 2).reshape(batch, length, self.all_head_size)
-        return context[padding.mask]
+        return self.attn(q, k, v)
 
 
 # ---------------------------------------------------------------------------
@@ -294,11 +273,12 @@ class DebertaV2Attention(nn.Module):
         self,
         config: DebertaV2Config,
         max_relative_positions: int,
+        max_len: int,
         prefix: str = "",
     ) -> None:
         super().__init__()
         self.self = DebertaV2DisentangledSelfAttention(
-            config, max_relative_positions, prefix=f"{prefix}.self"
+            config, max_relative_positions, max_len, prefix=f"{prefix}.self"
         )
         self.output = DebertaV2SelfOutput(config, prefix=f"{prefix}.output")
 
@@ -306,9 +286,9 @@ class DebertaV2Attention(nn.Module):
         self,
         hidden_states: torch.Tensor,
         rel_embeddings: torch.Tensor,
-        padding: Padding,
+        positions: torch.Tensor,
     ) -> torch.Tensor:
-        self_out = self.self(hidden_states, rel_embeddings, padding)
+        self_out = self.self(hidden_states, positions, rel_embeddings)
         return self.output(self_out, hidden_states)
 
 
@@ -356,11 +336,12 @@ class DebertaV2Layer(nn.Module):
         self,
         config: DebertaV2Config,
         max_relative_positions: int,
+        max_len: int,
         prefix: str = "",
     ) -> None:
         super().__init__()
         self.attention = DebertaV2Attention(
-            config, max_relative_positions, prefix=f"{prefix}.attention"
+            config, max_relative_positions, max_len, prefix=f"{prefix}.attention"
         )
         self.intermediate = DebertaV2Intermediate(
             config, prefix=f"{prefix}.intermediate"
@@ -371,9 +352,9 @@ class DebertaV2Layer(nn.Module):
         self,
         hidden_states: torch.Tensor,
         rel_embeddings: torch.Tensor,
-        padding: Padding,
+        positions: torch.Tensor,
     ) -> torch.Tensor:
-        attn_out = self.attention(hidden_states, rel_embeddings, padding)
+        attn_out = self.attention(hidden_states, rel_embeddings, positions)
         intermediate_out = self.intermediate(attn_out)
         return self.output(intermediate_out, attn_out)
 
@@ -385,6 +366,7 @@ class DebertaV2Encoder(nn.Module):
         self,
         config: DebertaV2Config,
         max_relative_positions: int,
+        max_len: int,
         prefix: str = "",
     ) -> None:
         super().__init__()
@@ -393,6 +375,7 @@ class DebertaV2Encoder(nn.Module):
                 DebertaV2Layer(
                     config,
                     max_relative_positions,
+                    max_len,
                     prefix=f"{prefix}.layer.{i}",
                 )
                 for i in range(config.num_hidden_layers)
@@ -418,11 +401,11 @@ class DebertaV2Encoder(nn.Module):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        padding: Padding,
+        positions: torch.Tensor,
     ) -> torch.Tensor:
         rel_embeddings = self._get_rel_embeddings()
         for layer in self.layer:
-            hidden_states = layer(hidden_states, rel_embeddings, padding)
+            hidden_states = layer(hidden_states, rel_embeddings, positions)
         return hidden_states
 
 
@@ -452,6 +435,7 @@ class DebertaV2Model(nn.Module):
         self.encoder = DebertaV2Encoder(
             config,
             max_relative_positions,
+            vllm_config.model_config.max_model_len,
             prefix=f"{prefix}.encoder",
         )
 
@@ -470,4 +454,4 @@ class DebertaV2Model(nn.Module):
             hidden_states = self.embeddings(input_ids, positions, token_type_ids)
         else:
             hidden_states = inputs_embeds
-        return self.encoder(hidden_states, Padding.from_positions(positions))
+        return self.encoder(hidden_states, positions)

@@ -15,7 +15,7 @@ Requires vLLM 0.30 or newer.
 ### Status
 
 - **BART** runs on vLLM 0.30.0. It was ported from `bart-plugin`, which targets older vLLM, for three vLLM API changes: the removed MRV2 architecture allowlist, `AutoWeightsLoader` skip lists, and the multimodal processor hook.
-- **GLiNER2** serves classification only; span extraction (entities, JSON structures, relations) is not ported. DeBERTa-v2/v3 and ModernBERT encoders are supported. The DeBERTa encoder computes its disentangled attention per sequence in PyTorch rather than through vLLM's attention backends, so it runs without CUDA graphs or `torch.compile`.
+- **GLiNER2** serves classification only; span extraction (entities, JSON structures, relations) is not ported. DeBERTa-v2/v3 and ModernBERT encoders are supported. DeBERTa's disentangled attention runs on a FlexAttention backend derived from vLLM's, which adds the relative-position terms through `score_mod`.
 - **Florence-2** still uses the removed `_call_hf_processor` hook and does not load on vLLM 0.30 yet.
 - `tests/bart/test_model_initialization.py` is still written for the older vLLM API: its tests build the model outside a vLLM config context, and two of them use a `small_model_name` fixture that does not exist.
 
