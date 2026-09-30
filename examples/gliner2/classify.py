@@ -4,7 +4,7 @@
 
 Online, serve the model and send the client's prompt ids to ``/pooling``:
 
-    vllm serve fastino/GLiNER2.5-Decide-1B --config-format gliner2
+    vllm serve fastino/GLiNER2.5-Decide --config-format gliner2
     curl localhost:8000/pooling -d '{"input": [<prompt ids>], "task": "token_classify"}'
 """
 
@@ -15,7 +15,7 @@ from vllm import LLM
 
 from rh_custom_models_plugin.gliner2.client import GLiNER2Client
 
-MODEL = "fastino/GLiNER2.5-Decide-1B"
+MODEL = "fastino/GLiNER2.5-Decide"
 
 TEXT = (
     "Guest in room 1408 says the AC has been out since yesterday and they want "

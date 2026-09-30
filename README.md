@@ -8,14 +8,14 @@ A [vLLM plugin](https://docs.vllm.ai/en/latest/design/plugin_system.html) for mo
 |---|---|---|
 | `rh_bart` | `BartForConditionalGeneration` | [vllm-project/bart-plugin](https://github.com/vllm-project/bart-plugin) @ `4da3192` |
 | `rh_florence2` | `Florence2ForConditionalGeneration` (BART backbone from `rh_bart`) | [vllm-project/bart-plugin](https://github.com/vllm-project/bart-plugin) @ `4da3192` |
-| `rh_gliner2` | `GLiNER2ForClassification`: [GLiNER2](https://github.com/fastino-ai/GLiNER2) zero-shot classification with a ModernBERT encoder, such as [`fastino/GLiNER2.5-Decide-1B`](https://huggingface.co/fastino/GLiNER2.5-Decide-1B) | new |
+| `rh_gliner2` | `GLiNER2ForClassification`: [GLiNER2](https://github.com/fastino-ai/GLiNER2) zero-shot classification, such as [`fastino/GLiNER2.5-Decide`](https://huggingface.co/fastino/GLiNER2.5-Decide) (DeBERTa-v3) and [`GLiNER2.5-Decide-1B`](https://huggingface.co/fastino/GLiNER2.5-Decide-1B) (ModernBERT) | new; DeBERTa-v2 encoder from [vllm-project/vllm#42094](https://github.com/vllm-project/vllm/pull/42094) |
 
 Requires vLLM 0.30 or newer.
 
 ### Status
 
 - **BART** runs on vLLM 0.30.0. It was ported from `bart-plugin`, which targets older vLLM, for three vLLM API changes: the removed MRV2 architecture allowlist, `AutoWeightsLoader` skip lists, and the multimodal processor hook.
-- **GLiNER2** serves classification only; span extraction (entities, JSON structures, relations) is not ported. Only ModernBERT encoders are supported, so `GLiNER2.5-Decide` and `GLiNER2.5-multi-Decide` (DeBERTa) are not; vLLM has no DeBERTa-v2 encoder yet.
+- **GLiNER2** serves classification only; span extraction (entities, JSON structures, relations) is not ported. DeBERTa-v2/v3 and ModernBERT encoders are supported. The DeBERTa encoder computes its disentangled attention per sequence in PyTorch rather than through vLLM's attention backends, so it runs without CUDA graphs or `torch.compile`.
 - **Florence-2** still uses the removed `_call_hf_processor` hook and does not load on vLLM 0.30 yet.
 - `tests/bart/test_model_initialization.py` is still written for the older vLLM API: its tests build the model outside a vLLM config context, and two of them use a `small_model_name` fixture that does not exist.
 
@@ -67,7 +67,7 @@ Serve with the `/v1/classify` endpoint. `VLLM_PLUGINS=rh_gliner2` loads the mode
 VLLM_PLUGINS=rh_gliner2 uvx --python 3.12 --torch-backend auto \
   --from "vllm==0.30.0" \
   --with "rh-custom-models-plugin[gliner2] @ git+ssh://git@github.com/neuralmagic/rh-custom-models-plugin.git" \
-  vllm serve fastino/GLiNER2.5-Decide-1B --config-format gliner2
+  vllm serve fastino/GLiNER2.5-Decide --config-format gliner2
 ```
 
 `POST /v1/classify` takes the arguments of `AutoExtractor.classify_text` and returns its answers, one per text:
@@ -89,7 +89,7 @@ Without the endpoint, the model returns one raw logit per candidate label from `
 ```python
 from rh_custom_models_plugin.gliner2.client import GLiNER2Client
 
-client = GLiNER2Client("fastino/GLiNER2.5-Decide-1B")
+client = GLiNER2Client("fastino/GLiNER2.5-Decide")
 request = client.build(
     text, {"intent": ["refund", "cancel", "other"], "urgent": ["yes", "no"]}
 )

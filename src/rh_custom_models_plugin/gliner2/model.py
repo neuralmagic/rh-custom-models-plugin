@@ -25,6 +25,10 @@ from vllm.utils.torch_utils import async_tensor_h2d
 from vllm.v1.outputs import PoolerOutput
 from vllm.v1.pool.metadata import PoolingMetadata
 
+from rh_custom_models_plugin.gliner2.deberta_v2 import DebertaV2Model
+
+ENCODERS = {"deberta-v2": DebertaV2Model, "modernbert": ModernBertModel}
+
 
 class GLiNER2LabelPooler(Pooler):
     def __init__(self, hidden_size: int, label_id: int, sep_text_id: int):
@@ -86,7 +90,8 @@ class GLiNER2ForClassification(nn.Module):
         super().__init__()
         config = vllm_config.model_config.hf_config
         marker_ids = config.gliner2_config["marker_token_ids"]
-        self.encoder = ModernBertModel(vllm_config=vllm_config, prefix="encoder")
+        encoder_cls = ENCODERS[config.model_type]
+        self.encoder = encoder_cls(vllm_config=vllm_config, prefix="encoder")
         self.pooler = GLiNER2LabelPooler(
             config.hidden_size, marker_ids["[L]"], marker_ids["[SEP_TEXT]"]
         )

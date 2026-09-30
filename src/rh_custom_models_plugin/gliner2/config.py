@@ -14,7 +14,7 @@ from transformers import AutoConfig, PretrainedConfig
 from vllm.transformers_utils.config_parser_base import ConfigParserBase
 from vllm.transformers_utils.repo_utils import get_hf_file_to_dict
 
-SUPPORTED_ENCODERS = ("modernbert",)
+SUPPORTED_ENCODERS = ("deberta-v2", "modernbert")
 MARKER_TOKENS = ("[P]", "[L]", "[SEP_TEXT]")
 
 

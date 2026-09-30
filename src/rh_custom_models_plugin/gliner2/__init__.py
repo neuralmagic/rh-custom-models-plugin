@@ -1,4 +1,4 @@
-"""GLiNER2 zero-shot classification (ModernBERT encoders).
+"""GLiNER2 zero-shot classification (DeBERTa-v2/v3 and ModernBERT encoders).
 
 Serve with ``--config-format gliner2``; build prompts and decode answers with
 ``rh_custom_models_plugin.gliner2.client.GLiNER2Client``.

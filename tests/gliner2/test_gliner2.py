@@ -3,7 +3,8 @@
 import pytest
 import torch
 
-MODEL = "fastino/GLiNER2.5-Decide-1B"
+# DeBERTa-v3-large and ModernBERT encoders.
+MODELS = ["fastino/GLiNER2.5-Decide", "fastino/GLiNER2.5-Decide-1B"]
 
 pytestmark = pytest.mark.slow
 
@@ -61,18 +62,19 @@ def _assert_close(got, want):
         assert got["confidence"] == pytest.approx(want["confidence"], abs=1e-2)
 
 
+@pytest.mark.parametrize("model", MODELS)
 @torch.inference_mode()
-def test_matches_gliner2(monkeypatch):
+def test_matches_gliner2(monkeypatch, model):
     monkeypatch.setenv("VLLM_WORKER_MULTIPROC_METHOD", "spawn")
     from gliner2 import AutoExtractor
     from vllm import LLM
 
     from rh_custom_models_plugin.gliner2.client import GLiNER2Client
 
-    client = GLiNER2Client(MODEL)
+    client = GLiNER2Client(model)
     requests = [client.build(text, tasks) for text, tasks in CASES]
     llm = LLM(
-        MODEL,
+        model,
         config_format="gliner2",
         runner="pooling",
         dtype="float32",
@@ -89,7 +91,7 @@ def test_matches_gliner2(monkeypatch):
     ]
     del llm
 
-    reference = AutoExtractor.from_pretrained(MODEL).to("cuda").eval()
+    reference = AutoExtractor.from_pretrained(model).to("cuda").eval()
     for (text, tasks), answers in zip(CASES, got):
         want = reference.classify_text(text, tasks, include_confidence=True)
         assert answers.keys() == want.keys()
